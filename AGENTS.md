@@ -87,6 +87,20 @@ When adapting BMX behavior:
 * Preserve compatibility with the current Rojo structure.
 * If a change requires editing Roblox Studio models manually, explain the exact Explorer path and properties to change.
 
+## Local checks
+
+After making code changes, try to run these checks:
+
+1. `rojo build default.project.json --output build.rbxlx`
+2. `stylua --check src`
+3. `selene src`
+
+If a command is missing, say exactly which command is missing.
+
+Do not edit `reference/bmx` unless explicitly asked.
+
+Do not spend time rewriting the whole system. Make small changes, then explain how to test them in Roblox Studio.
+
 ## Language
 
 * The user may write tasks in Russian.

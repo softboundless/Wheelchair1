@@ -1,0 +1,1231 @@
+<roblox version="4">
+  <Item class="ReplicatedStorage" referent="0">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="Folder" referent="1">
+      <Properties>
+        <string name="Name">RojoShared</string>
+      </Properties>
+      <Item class="ModuleScript" referent="2">
+        <Properties>
+          <string name="Name">WheelchairConfig</string>
+          <string name="Source"><![CDATA[--!strict
+
+local WheelchairConfig = {}
+
+export type DriveInput = {
+	throttle: number,
+	steer: number,
+	jump: boolean,
+}
+
+WheelchairConfig.Debug = true
+WheelchairConfig.DebugPrefix = "[Wheelchair]"
+
+WheelchairConfig.SharedFolderName = "RojoShared"
+WheelchairConfig.RemoteFolderName = "WheelchairRemotes"
+WheelchairConfig.DriveInputRemoteName = "WheelchairDriveInput"
+
+WheelchairConfig.WorkspaceFolderName = "Wheelchairs"
+
+WheelchairConfig.Model = {
+	TemplateName = "Wheelchair",
+	RootPartName = "Frame",
+	SeatName = "Seat",
+	IsWheelchairAttribute = "IsWheelchair",
+	OwnerUserIdAttribute = "OwnerUserId",
+	OwnerNameAttribute = "OwnerName",
+	RootTransparency = 1,
+}
+
+WheelchairConfig.Spawn = {
+	UseDebugFallback = true,
+	SpawnHeightOffset = 0,
+	SeatDelay = 0.2,
+}
+
+WheelchairConfig.Input = {
+	DeadZone = 0.05,
+	MinSendInterval = 1 / 30,
+}
+
+WheelchairConfig.Movement = {
+	MaxSpeed = 44,
+	ReverseSpeedMultiplier = 0.35,
+	Acceleration = 90,
+	CoastDeceleration = 50,
+	TurnRate = 2.6,
+	GroundRayLength = 7,
+	GroundedDistance = 4,
+	GroundNormalLerpSpeed = 14,
+	OrientationLerpSpeed = 12,
+	MaxPlanarVelocity = 58,
+	MaxAngularVelocity = 8,
+	EnableJump = true,
+	JumpSpeed = 34,
+	JumpCooldown = 0.65,
+}
+
+WheelchairConfig.Camera = {
+	Distance = 13,
+	Height = 6,
+	FocusHeight = 2.5,
+	LerpSpeed = 9,
+	FieldOfView = 78,
+}
+
+WheelchairConfig.Avatar = {
+	DescriptionApplyDelay = 0.25,
+	RemoveTools = true,
+	ResetBodyPackages = true,
+	AccessoryDescriptionFieldsToClear = {
+		"HatAccessory",
+		"BackAccessory",
+		"WaistAccessory",
+		"ShouldersAccessory",
+		"ShoulderAccessory",
+		"FrontAccessory",
+		"NeckAccessory",
+		"FaceAccessory",
+	},
+	BodyPartFieldsToReset = {
+		"Head",
+		"Torso",
+		"LeftArm",
+		"RightArm",
+		"LeftLeg",
+		"RightLeg",
+	},
+	ScaleProperties = {
+		BodyTypeScale = 0,
+		DepthScale = 1,
+		HeadScale = 1,
+		HeightScale = 1,
+		ProportionScale = 0,
+		WidthScale = 1,
+	},
+}
+
+local DEFAULT_DRIVE_INPUT: DriveInput = {
+	throttle = 0,
+	steer = 0,
+	jump = false,
+}
+
+local function readNumber(value: unknown, fallback: number): number
+	if typeof(value) ~= "number" then
+		return fallback
+	end
+
+	if value ~= value then
+		return fallback
+	end
+
+	return value
+end
+
+local function applyDeadZone(value: number): number
+	if math.abs(value) < WheelchairConfig.Input.DeadZone then
+		return 0
+	end
+
+	return value
+end
+
+function WheelchairConfig.sanitizeDriveInput(input: unknown): DriveInput
+	if typeof(input) ~= "table" then
+		return table.clone(DEFAULT_DRIVE_INPUT)
+	end
+
+	local rawInput = input :: any
+
+	return {
+		throttle = applyDeadZone(math.clamp(readNumber(rawInput.throttle, 0), -1, 1)),
+		steer = applyDeadZone(math.clamp(readNumber(rawInput.steer, 0), -1, 1)),
+		jump = rawInput.jump == true,
+	}
+end
+
+function WheelchairConfig.hasActiveInput(input: DriveInput): boolean
+	return input.throttle ~= 0 or input.steer ~= 0 or input.jump
+end
+
+function WheelchairConfig.debugPrint(...: any)
+	if not WheelchairConfig.Debug then
+		return
+	end
+
+	print(WheelchairConfig.DebugPrefix, ...)
+end
+
+function WheelchairConfig.debugWarn(...: any)
+	if not WheelchairConfig.Debug then
+		return
+	end
+
+	warn(WheelchairConfig.DebugPrefix, ...)
+end
+
+return WheelchairConfig
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="3">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Folder" referent="4">
+      <Properties>
+        <string name="Name">RojoServer</string>
+      </Properties>
+      <Item class="Script" referent="5">
+        <Properties>
+          <string name="Name">WheelchairService</string>
+          <token name="RunContext">0</token>
+          <string name="Source"><![CDATA[--!strict
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local ServerStorage = game:GetService("ServerStorage")
+local Workspace = game:GetService("Workspace")
+
+local RojoShared = ReplicatedStorage:WaitForChild("RojoShared")
+local WheelchairConfig = require(RojoShared:WaitForChild("WheelchairConfig"))
+
+type DriveInput = WheelchairConfig.DriveInput
+
+type PlayerState = {
+	vehicle: Model?,
+	rootPart: BasePart?,
+	seat: VehicleSeat?,
+	driveInput: DriveInput,
+	lastInputAt: number,
+	lastInputDebugKey: string,
+	groundNormal: Vector3,
+	jumpQueued: boolean,
+	lastJumpAt: number,
+}
+
+local playerStates: { [Player]: PlayerState } = {}
+
+local blockedAccessoryTypes = {
+	[Enum.AccessoryType.Hat] = true,
+	[Enum.AccessoryType.Back] = true,
+	[Enum.AccessoryType.Waist] = true,
+	[Enum.AccessoryType.Shoulder] = true,
+	[Enum.AccessoryType.Front] = true,
+	[Enum.AccessoryType.Neck] = true,
+	[Enum.AccessoryType.Face] = true,
+}
+
+local function getDefaultDriveInput(): DriveInput
+	return WheelchairConfig.sanitizeDriveInput(nil)
+end
+
+local function getPlayerState(player: Player): PlayerState
+	local state = playerStates[player]
+
+	if state == nil then
+		state = {
+			vehicle = nil,
+			rootPart = nil,
+			seat = nil,
+			driveInput = getDefaultDriveInput(),
+			lastInputAt = 0,
+			lastInputDebugKey = "",
+			groundNormal = Vector3.yAxis,
+			jumpQueued = false,
+			lastJumpAt = 0,
+		}
+
+		playerStates[player] = state
+	end
+
+	return state
+end
+
+local function getSharedFolder(): Folder
+	local sharedFolder = ReplicatedStorage:WaitForChild(WheelchairConfig.SharedFolderName)
+
+	assert(sharedFolder:IsA("Folder"), "RojoShared must be a Folder")
+
+	return sharedFolder :: Folder
+end
+
+local function getOrCreateRemoteFolder(): Folder
+	local sharedFolder = getSharedFolder()
+	local existingFolder = sharedFolder:FindFirstChild(WheelchairConfig.RemoteFolderName)
+
+	if existingFolder ~= nil then
+		assert(existingFolder:IsA("Folder"), "WheelchairRemotes must be a Folder")
+		return existingFolder :: Folder
+	end
+
+	local folder = Instance.new("Folder")
+	folder.Name = WheelchairConfig.RemoteFolderName
+	folder.Parent = sharedFolder
+
+	return folder
+end
+
+local function getOrCreateDriveInputRemote(): RemoteEvent
+	local remoteFolder = getOrCreateRemoteFolder()
+	local existingRemote = remoteFolder:FindFirstChild(WheelchairConfig.DriveInputRemoteName)
+
+	if existingRemote ~= nil then
+		assert(existingRemote:IsA("RemoteEvent"), "WheelchairDriveInput must be a RemoteEvent")
+		return existingRemote :: RemoteEvent
+	end
+
+	local remote = Instance.new("RemoteEvent")
+	remote.Name = WheelchairConfig.DriveInputRemoteName
+	remote.Parent = remoteFolder
+
+	return remote
+end
+
+local function getOrCreateWorkspaceFolder(): Folder
+	local existingFolder = Workspace:FindFirstChild(WheelchairConfig.WorkspaceFolderName)
+
+	if existingFolder ~= nil then
+		assert(existingFolder:IsA("Folder"), "Workspace.Wheelchairs must be a Folder")
+		return existingFolder :: Folder
+	end
+
+	local folder = Instance.new("Folder")
+	folder.Name = WheelchairConfig.WorkspaceFolderName
+	folder.Parent = Workspace
+
+	return folder
+end
+
+local function findWheelchairTemplate(): Model?
+	local templateName = WheelchairConfig.Model.TemplateName
+	local candidates = {
+		ServerStorage,
+		ReplicatedStorage,
+		getSharedFolder(),
+		Workspace,
+	}
+
+	for _, container in ipairs(candidates) do
+		local candidate = container:FindFirstChild(templateName)
+
+		if candidate ~= nil and candidate:IsA("Model") then
+			return candidate
+		end
+	end
+
+	return nil
+end
+
+local function ensureWeld(rootPart: BasePart, part: BasePart)
+	if part == rootPart then
+		return
+	end
+
+	for _, child in ipairs(part:GetChildren()) do
+		if child:IsA("WeldConstraint") then
+			if (child.Part0 == rootPart and child.Part1 == part) or (child.Part0 == part and child.Part1 == rootPart) then
+				return
+			end
+		end
+	end
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Name = "WheelchairRootWeld"
+	weld.Part0 = rootPart
+	weld.Part1 = part
+	weld.Parent = part
+end
+
+local function createDebugPart(name: string, size: Vector3, cframe: CFrame, color: Color3, parent: Instance): Part
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Size = size
+	part.CFrame = cframe
+	part.Color = color
+	part.Anchored = false
+	part.CanCollide = false
+	part.Massless = true
+	part.Parent = parent
+
+	return part
+end
+
+local function createDebugWheelchair(): Model
+	local model = Instance.new("Model")
+	model.Name = WheelchairConfig.Model.TemplateName
+
+	local rootPart = Instance.new("Part")
+	rootPart.Name = WheelchairConfig.Model.RootPartName
+	rootPart.Size = Vector3.new(4, 1, 5)
+	rootPart.Transparency = WheelchairConfig.Model.RootTransparency
+	rootPart.Anchored = false
+	rootPart.CanCollide = true
+	rootPart.Massless = false
+	rootPart.CustomPhysicalProperties = PhysicalProperties.new(1.2, 1.1, 0.05, 1, 1)
+	rootPart.Parent = model
+
+	local seat = Instance.new("VehicleSeat")
+	seat.Name = WheelchairConfig.Model.SeatName
+	seat.Size = Vector3.new(2, 0.4, 2)
+	seat.CFrame = rootPart.CFrame * CFrame.new(0, 1.1, -0.2)
+	seat.Transparency = 0.35
+	seat.Anchored = false
+	seat.CanCollide = false
+	seat.Massless = true
+	seat.Disabled = false
+	seat.Parent = model
+
+	local base = createDebugPart(
+		"VisualBase",
+		Vector3.new(4.3, 0.3, 4.2),
+		rootPart.CFrame * CFrame.new(0, 0.65, 0),
+		Color3.fromRGB(54, 61, 71),
+		model
+	)
+
+	local backRest = createDebugPart(
+		"VisualBackRest",
+		Vector3.new(3.4, 3, 0.3),
+		rootPart.CFrame * CFrame.new(0, 1.9, 1.65) * CFrame.Angles(math.rad(8), 0, 0),
+		Color3.fromRGB(71, 84, 98),
+		model
+	)
+
+	local leftWheel = createDebugPart(
+		"LeftWheel",
+		Vector3.new(2.4, 0.28, 2.4),
+		rootPart.CFrame * CFrame.new(-2.25, 0.05, 0.55) * CFrame.Angles(0, 0, math.rad(90)),
+		Color3.fromRGB(24, 27, 33),
+		model
+	)
+	leftWheel.Shape = Enum.PartType.Cylinder
+
+	local rightWheel = createDebugPart(
+		"RightWheel",
+		Vector3.new(2.4, 0.28, 2.4),
+		rootPart.CFrame * CFrame.new(2.25, 0.05, 0.55) * CFrame.Angles(0, 0, math.rad(90)),
+		Color3.fromRGB(24, 27, 33),
+		model
+	)
+	rightWheel.Shape = Enum.PartType.Cylinder
+
+	local leftCaster = createDebugPart(
+		"LeftCaster",
+		Vector3.new(0.7, 0.18, 0.7),
+		rootPart.CFrame * CFrame.new(-1.35, -0.2, -1.75) * CFrame.Angles(0, 0, math.rad(90)),
+		Color3.fromRGB(32, 36, 43),
+		model
+	)
+	leftCaster.Shape = Enum.PartType.Cylinder
+
+	local rightCaster = createDebugPart(
+		"RightCaster",
+		Vector3.new(0.7, 0.18, 0.7),
+		rootPart.CFrame * CFrame.new(1.35, -0.2, -1.75) * CFrame.Angles(0, 0, math.rad(90)),
+		Color3.fromRGB(32, 36, 43),
+		model
+	)
+	rightCaster.Shape = Enum.PartType.Cylinder
+
+	for _, part in ipairs(model:GetChildren()) do
+		if part:IsA("BasePart") then
+			ensureWeld(rootPart, part)
+		end
+	end
+
+	model.PrimaryPart = rootPart
+	return model
+end
+
+local function findVehiclePart(model: Model, partName: string): BasePart?
+	local instance = model:FindFirstChild(partName, true)
+
+	if instance ~= nil and instance:IsA("BasePart") then
+		return instance
+	end
+
+	return nil
+end
+
+local function findVehicleSeat(model: Model): VehicleSeat?
+	local namedSeat = model:FindFirstChild(WheelchairConfig.Model.SeatName, true)
+
+	if namedSeat ~= nil and namedSeat:IsA("VehicleSeat") then
+		return namedSeat
+	end
+
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("VehicleSeat") then
+			return descendant
+		end
+	end
+
+	return nil
+end
+
+local function configureVehicleModel(player: Player, model: Model): (BasePart?, VehicleSeat?)
+	local rootPart = findVehiclePart(model, WheelchairConfig.Model.RootPartName)
+
+	if rootPart == nil then
+		WheelchairConfig.debugWarn("Wheelchair model is missing root part:", WheelchairConfig.Model.RootPartName)
+		return nil, nil
+	end
+
+	local seat = findVehicleSeat(model)
+
+	if seat == nil then
+		WheelchairConfig.debugWarn("Wheelchair model is missing VehicleSeat:", WheelchairConfig.Model.SeatName)
+		return nil, nil
+	end
+
+	model.PrimaryPart = rootPart
+	model:SetAttribute(WheelchairConfig.Model.IsWheelchairAttribute, true)
+	model:SetAttribute(WheelchairConfig.Model.OwnerUserIdAttribute, player.UserId)
+	model:SetAttribute(WheelchairConfig.Model.OwnerNameAttribute, player.Name)
+
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			descendant.Anchored = false
+
+			if descendant == rootPart then
+				descendant.CanCollide = true
+				descendant.Massless = false
+				descendant.Transparency = WheelchairConfig.Model.RootTransparency
+				descendant.CustomPhysicalProperties = PhysicalProperties.new(1.2, 1.1, 0.05, 1, 1)
+			else
+				descendant.CanCollide = false
+				descendant.Massless = true
+				ensureWeld(rootPart, descendant)
+			end
+		end
+	end
+
+	seat.Disabled = false
+
+	local success = pcall(function()
+		rootPart:SetNetworkOwner(nil)
+	end)
+
+	if not success then
+		WheelchairConfig.debugWarn("Could not set server network ownership for", player.Name)
+	end
+
+	return rootPart, seat
+end
+
+local function destroyPlayerVehicle(player: Player)
+	local state = getPlayerState(player)
+
+	if state.vehicle ~= nil then
+		state.vehicle:Destroy()
+		WheelchairConfig.debugPrint("Destroyed old wheelchair for", player.Name)
+	end
+
+	state.vehicle = nil
+	state.rootPart = nil
+	state.seat = nil
+	state.driveInput = getDefaultDriveInput()
+	state.jumpQueued = false
+end
+
+local function setDescriptionProperty(description: HumanoidDescription, propertyName: string, value: any)
+	local success = pcall(function()
+		(description :: any)[propertyName] = value
+	end)
+
+	if not success then
+		WheelchairConfig.debugWarn("Could not set HumanoidDescription property:", propertyName)
+	end
+end
+
+local function cleanHumanoidDescription(description: HumanoidDescription): HumanoidDescription
+	local cleanedDescription = description:Clone() :: HumanoidDescription
+
+	for _, fieldName in ipairs(WheelchairConfig.Avatar.AccessoryDescriptionFieldsToClear) do
+		setDescriptionProperty(cleanedDescription, fieldName, "")
+	end
+
+	if WheelchairConfig.Avatar.ResetBodyPackages then
+		for _, fieldName in ipairs(WheelchairConfig.Avatar.BodyPartFieldsToReset) do
+			setDescriptionProperty(cleanedDescription, fieldName, 0)
+		end
+	end
+
+	for propertyName, value in pairs(WheelchairConfig.Avatar.ScaleProperties) do
+		setDescriptionProperty(cleanedDescription, propertyName, value)
+	end
+
+	return cleanedDescription
+end
+
+local function removeBlockedAccessories(character: Model)
+	for _, child in ipairs(character:GetChildren()) do
+		if child:IsA("Accessory") and blockedAccessoryTypes[child.AccessoryType] then
+			child:Destroy()
+		end
+	end
+end
+
+local function removeTools(player: Player, character: Model)
+	if not WheelchairConfig.Avatar.RemoveTools then
+		return
+	end
+
+	for _, child in ipairs(character:GetChildren()) do
+		if child:IsA("Tool") then
+			child:Destroy()
+		end
+	end
+
+	local backpack = player:FindFirstChildOfClass("Backpack")
+
+	if backpack == nil then
+		return
+	end
+
+	for _, child in ipairs(backpack:GetChildren()) do
+		if child:IsA("Tool") then
+			child:Destroy()
+		end
+	end
+end
+
+local function disableSeatExitJump(humanoid: Humanoid)
+	humanoid.Jump = false
+	humanoid.AutoRotate = false
+
+	pcall(function()
+		humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+	end)
+
+	pcall(function()
+		humanoid.UseJumpPower = true
+		humanoid.JumpPower = 0
+	end)
+
+	pcall(function()
+		humanoid.JumpHeight = 0
+	end)
+end
+
+local function cleanAvatar(player: Player, character: Model, humanoid: Humanoid)
+	task.wait(WheelchairConfig.Avatar.DescriptionApplyDelay)
+
+	local success, appliedDescription = pcall(function()
+		return humanoid:GetAppliedDescription()
+	end)
+
+	if success and appliedDescription ~= nil then
+		local cleanedDescription = cleanHumanoidDescription(appliedDescription)
+		local applySuccess, applyError = pcall(function()
+			humanoid:ApplyDescription(cleanedDescription)
+		end)
+
+		if applySuccess then
+			WheelchairConfig.debugPrint("Cleaned avatar for", player.Name)
+		else
+			WheelchairConfig.debugWarn("Failed to apply cleaned avatar for", player.Name, applyError)
+		end
+	else
+		WheelchairConfig.debugWarn("Could not read avatar description for", player.Name)
+	end
+
+	removeBlockedAccessories(character)
+	removeTools(player, character)
+
+	if humanoid.RigType ~= Enum.HumanoidRigType.R15 then
+		WheelchairConfig.debugWarn(player.Name, "is not using R15. Wheelchair seating is tuned for normal R15 avatars.")
+	end
+
+	disableSeatExitJump(humanoid)
+end
+
+local function getSpawnCFrame(characterRootPart: BasePart): CFrame
+	local lookVector = characterRootPart.CFrame.LookVector
+	local flatLookVector = Vector3.new(lookVector.X, 0, lookVector.Z)
+
+	if flatLookVector.Magnitude < 0.05 then
+		flatLookVector = Vector3.zAxis * -1
+	else
+		flatLookVector = flatLookVector.Unit
+	end
+
+	local spawnPosition = characterRootPart.Position + Vector3.new(0, WheelchairConfig.Spawn.SpawnHeightOffset, 0)
+
+	return CFrame.lookAt(spawnPosition, spawnPosition + flatLookVector)
+end
+
+local function spawnWheelchairForPlayer(player: Player, character: Model, humanoid: Humanoid, characterRootPart: BasePart)
+	destroyPlayerVehicle(player)
+
+	local template = findWheelchairTemplate()
+	local vehicle: Model
+
+	if template ~= nil then
+		vehicle = template:Clone()
+		WheelchairConfig.debugPrint("Cloned Wheelchair template for", player.Name)
+	elseif WheelchairConfig.Spawn.UseDebugFallback then
+		vehicle = createDebugWheelchair()
+		WheelchairConfig.debugWarn("No Wheelchair template found. Created debug fallback for", player.Name)
+	else
+		WheelchairConfig.debugWarn("No Wheelchair template found, and debug fallback is disabled.")
+		return
+	end
+
+	vehicle.Name = player.Name .. "_Wheelchair"
+	vehicle.Parent = getOrCreateWorkspaceFolder()
+
+	local rootPart, seat = configureVehicleModel(player, vehicle)
+
+	if rootPart == nil or seat == nil then
+		vehicle:Destroy()
+		return
+	end
+
+	vehicle:PivotTo(getSpawnCFrame(characterRootPart))
+
+	local state = getPlayerState(player)
+	state.vehicle = vehicle
+	state.rootPart = rootPart
+	state.seat = seat
+	state.groundNormal = Vector3.yAxis
+	state.driveInput = getDefaultDriveInput()
+
+	task.delay(WheelchairConfig.Spawn.SeatDelay, function()
+		if humanoid.Parent == nil or seat.Parent == nil then
+			return
+		end
+
+		disableSeatExitJump(humanoid)
+		seat:Sit(humanoid)
+		WheelchairConfig.debugPrint("Seated", player.Name, "in wheelchair")
+	end)
+
+	WheelchairConfig.debugPrint("Spawned wheelchair for", player.Name)
+end
+
+local function isPlayerSeatedInOwnWheelchair(player: Player, state: PlayerState): boolean
+	local character = player.Character
+
+	if character == nil then
+		return false
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+	if humanoid == nil then
+		return false
+	end
+
+	if state.seat == nil then
+		return false
+	end
+
+	return humanoid.SeatPart == state.seat
+end
+
+local function buildRaycastParams(player: Player, state: PlayerState): RaycastParams
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+
+	local filterInstances: { Instance } = {}
+
+	if state.vehicle ~= nil then
+		table.insert(filterInstances, state.vehicle)
+	end
+
+	if player.Character ~= nil then
+		table.insert(filterInstances, player.Character)
+	end
+
+	params.FilterDescendantsInstances = filterInstances
+
+	return params
+end
+
+local function getPlanarVector(vector: Vector3, normal: Vector3): Vector3
+	return vector - normal * vector:Dot(normal)
+end
+
+local function getStableForward(rootPart: BasePart, normal: Vector3): Vector3
+	local forward = getPlanarVector(rootPart.CFrame.LookVector, normal)
+
+	if forward.Magnitude < 0.05 then
+		forward = getPlanarVector(Vector3.zAxis * -1, normal)
+	end
+
+	if forward.Magnitude < 0.05 then
+		return Vector3.zAxis * -1
+	end
+
+	return forward.Unit
+end
+
+local function getGroundInfo(player: Player, state: PlayerState, rootPart: BasePart, deltaTime: number): (boolean, Vector3)
+	local rayOrigin = rootPart.Position
+	local rayDirection = -state.groundNormal.Unit * WheelchairConfig.Movement.GroundRayLength
+	local result = Workspace:Raycast(rayOrigin, rayDirection, buildRaycastParams(player, state))
+
+	if result == nil then
+		local fallbackNormal = state.groundNormal:Lerp(Vector3.yAxis, math.clamp(deltaTime * 2, 0, 1))
+		state.groundNormal = fallbackNormal.Unit
+		return false, state.groundNormal
+	end
+
+	local distance = (result.Position - rayOrigin).Magnitude
+	local grounded = distance <= WheelchairConfig.Movement.GroundedDistance
+	local lerpSpeed = WheelchairConfig.Movement.GroundNormalLerpSpeed
+
+	state.groundNormal = state.groundNormal:Lerp(result.Normal, math.clamp(deltaTime * lerpSpeed, 0, 1)).Unit
+
+	return grounded, state.groundNormal
+end
+
+local function stabilizeRoot(rootPart: BasePart, normal: Vector3, deltaTime: number)
+	local forward = getStableForward(rootPart, normal)
+	local targetCFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + forward, normal)
+	local alpha = math.clamp(deltaTime * WheelchairConfig.Movement.OrientationLerpSpeed, 0, 1)
+
+	rootPart.CFrame = rootPart.CFrame:Lerp(targetCFrame, alpha)
+end
+
+local function applyWheelchairMovement(player: Player, state: PlayerState, deltaTime: number)
+	local rootPart = state.rootPart
+
+	if rootPart == nil or rootPart.Parent == nil then
+		return
+	end
+
+	if not isPlayerSeatedInOwnWheelchair(player, state) then
+		state.driveInput = getDefaultDriveInput()
+		state.jumpQueued = false
+		return
+	end
+
+	local grounded, groundNormal = getGroundInfo(player, state, rootPart, deltaTime)
+	local driveInput = state.driveInput
+	local movement = WheelchairConfig.Movement
+	local currentVelocity = rootPart.AssemblyLinearVelocity
+	local planarVelocity = getPlanarVector(currentVelocity, groundNormal)
+	local verticalVelocity = currentVelocity - planarVelocity
+	local maxSpeed = movement.MaxSpeed
+
+	if driveInput.throttle < 0 then
+		maxSpeed *= movement.ReverseSpeedMultiplier
+	end
+
+	local forward = getStableForward(rootPart, groundNormal)
+	local targetPlanarVelocity = forward * (driveInput.throttle * maxSpeed)
+	local acceleration = if driveInput.throttle == 0 then movement.CoastDeceleration else movement.Acceleration
+	local blend = math.clamp((deltaTime * acceleration) / math.max(maxSpeed, 1), 0, 1)
+	local newPlanarVelocity = planarVelocity:Lerp(targetPlanarVelocity, blend)
+
+	if newPlanarVelocity.Magnitude > movement.MaxPlanarVelocity then
+		newPlanarVelocity = newPlanarVelocity.Unit * movement.MaxPlanarVelocity
+	end
+
+	rootPart.AssemblyLinearVelocity = newPlanarVelocity + verticalVelocity
+
+	local speedRatio = math.clamp(newPlanarVelocity.Magnitude / math.max(movement.MaxSpeed, 1), 0, 1)
+	local turnVelocity = groundNormal * (driveInput.steer * movement.TurnRate * math.max(speedRatio, 0.25))
+
+	if turnVelocity.Magnitude > movement.MaxAngularVelocity then
+		turnVelocity = turnVelocity.Unit * movement.MaxAngularVelocity
+	end
+
+	rootPart.AssemblyAngularVelocity = turnVelocity
+
+	if grounded then
+		stabilizeRoot(rootPart, groundNormal, deltaTime)
+	else
+		stabilizeRoot(rootPart, Vector3.yAxis, deltaTime * 0.35)
+	end
+
+	if state.jumpQueued and movement.EnableJump and grounded then
+		local now = os.clock()
+
+		if now - state.lastJumpAt >= movement.JumpCooldown then
+			local velocity = rootPart.AssemblyLinearVelocity
+			rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, math.max(velocity.Y, movement.JumpSpeed), velocity.Z)
+			state.lastJumpAt = now
+			WheelchairConfig.debugPrint("Wheelchair jump for", player.Name)
+		end
+	end
+
+	state.jumpQueued = false
+end
+
+local function canAcceptInput(state: PlayerState, nextInput: DriveInput, isJumpEdge: boolean): boolean
+	if isJumpEdge then
+		return true
+	end
+
+	if not WheelchairConfig.hasActiveInput(nextInput) then
+		state.lastInputAt = os.clock()
+		return true
+	end
+
+	local now = os.clock()
+
+	if now - state.lastInputAt < WheelchairConfig.Input.MinSendInterval then
+		return false
+	end
+
+	state.lastInputAt = now
+	return true
+end
+
+local function getDebugInputKey(input: DriveInput): string
+	return string.format("t=%.1f,s=%.1f,j=%s", input.throttle, input.steer, tostring(input.jump))
+end
+
+local function onDriveInput(player: Player, input: unknown)
+	local state = getPlayerState(player)
+	local nextInput = WheelchairConfig.sanitizeDriveInput(input)
+	local isJumpEdge = nextInput.jump and not state.driveInput.jump
+
+	if not canAcceptInput(state, nextInput, isJumpEdge) then
+		return
+	end
+
+	if not isPlayerSeatedInOwnWheelchair(player, state) then
+		state.driveInput = getDefaultDriveInput()
+		state.jumpQueued = false
+		return
+	end
+
+	if isJumpEdge then
+		state.jumpQueued = true
+	end
+
+	state.driveInput = nextInput
+
+	local debugKey = getDebugInputKey(nextInput)
+
+	if debugKey ~= state.lastInputDebugKey then
+		state.lastInputDebugKey = debugKey
+		WheelchairConfig.debugPrint("Input from", player.Name, debugKey)
+	end
+end
+
+local function handleCharacter(player: Player, character: Model)
+	local humanoid = character:WaitForChild("Humanoid", 10)
+	local characterRootPart = character:WaitForChild("HumanoidRootPart", 10)
+
+	if humanoid == nil or characterRootPart == nil then
+		WheelchairConfig.debugWarn("Character missing Humanoid or HumanoidRootPart for", player.Name)
+		return
+	end
+
+	if not humanoid:IsA("Humanoid") or not characterRootPart:IsA("BasePart") then
+		WheelchairConfig.debugWarn("Invalid character parts for", player.Name)
+		return
+	end
+
+	cleanAvatar(player, character, humanoid)
+	spawnWheelchairForPlayer(player, character, humanoid, characterRootPart)
+end
+
+local function onPlayerAdded(player: Player)
+	getPlayerState(player)
+
+	player.CharacterAdded:Connect(function(character: Model)
+		task.defer(handleCharacter, player, character)
+	end)
+
+	player.CharacterRemoving:Connect(function()
+		destroyPlayerVehicle(player)
+	end)
+
+	if player.Character ~= nil then
+		task.defer(handleCharacter, player, player.Character)
+	end
+end
+
+local function start()
+	local driveInputRemote = getOrCreateDriveInputRemote()
+
+	driveInputRemote.OnServerEvent:Connect(onDriveInput)
+
+	Players.PlayerAdded:Connect(onPlayerAdded)
+	Players.PlayerRemoving:Connect(function(player: Player)
+		destroyPlayerVehicle(player)
+		playerStates[player] = nil
+	end)
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		task.defer(onPlayerAdded, player)
+	end
+
+	RunService.Heartbeat:Connect(function(deltaTime: number)
+		for player, state in pairs(playerStates) do
+			applyWheelchairMovement(player, state, deltaTime)
+		end
+	end)
+
+	WheelchairConfig.debugPrint("WheelchairService started")
+end
+
+start()
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="StarterPlayer" referent="6">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="7">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="Folder" referent="8">
+        <Properties>
+          <string name="Name">RojoClient</string>
+        </Properties>
+        <Item class="LocalScript" referent="9">
+          <Properties>
+            <string name="Name">WheelchairClient</string>
+            <string name="Source"><![CDATA[--!strict
+
+local ContextActionService = game:GetService("ContextActionService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local localPlayer = Players.LocalPlayer
+local camera = Workspace.CurrentCamera
+
+if camera == nil then
+	Workspace:GetPropertyChangedSignal("CurrentCamera"):Wait()
+	camera = Workspace.CurrentCamera
+end
+
+assert(camera ~= nil, "CurrentCamera must exist for WheelchairClient")
+
+local RojoShared = ReplicatedStorage:WaitForChild("RojoShared")
+local WheelchairConfig = require(RojoShared:WaitForChild("WheelchairConfig"))
+
+type DriveInput = WheelchairConfig.DriveInput
+
+local remotesFolder = RojoShared:WaitForChild(WheelchairConfig.RemoteFolderName)
+local driveInputRemote = remotesFolder:WaitForChild(WheelchairConfig.DriveInputRemoteName) :: RemoteEvent
+
+local actionState = {
+	forward = 0,
+	backward = 0,
+	left = 0,
+	right = 0,
+	jump = false,
+}
+
+local lastSentInput: DriveInput = WheelchairConfig.sanitizeDriveInput(nil)
+local lastSentAt = 0
+local cameraEnabled = false
+local wasDriving = false
+
+local function clearActionState()
+	actionState.forward = 0
+	actionState.backward = 0
+	actionState.left = 0
+	actionState.right = 0
+	actionState.jump = false
+end
+
+local function getHumanoid(): Humanoid?
+	local character = localPlayer.Character
+
+	if character == nil then
+		return nil
+	end
+
+	return character:FindFirstChildOfClass("Humanoid")
+end
+
+local function getDrivingWheelchair(): (Model?, BasePart?)
+	local humanoid = getHumanoid()
+
+	if humanoid == nil or humanoid.SeatPart == nil then
+		return nil, nil
+	end
+
+	local vehicleModel = humanoid.SeatPart:FindFirstAncestorWhichIsA("Model")
+
+	if vehicleModel == nil then
+		return nil, nil
+	end
+
+	if vehicleModel:GetAttribute(WheelchairConfig.Model.IsWheelchairAttribute) ~= true then
+		return nil, nil
+	end
+
+	if vehicleModel:GetAttribute(WheelchairConfig.Model.OwnerUserIdAttribute) ~= localPlayer.UserId then
+		return nil, nil
+	end
+
+	local rootPart = vehicleModel:FindFirstChild(WheelchairConfig.Model.RootPartName, true)
+
+	if rootPart == nil or not rootPart:IsA("BasePart") then
+		return vehicleModel, nil
+	end
+
+	return vehicleModel, rootPart
+end
+
+local function buildDriveInput(): DriveInput
+	return WheelchairConfig.sanitizeDriveInput({
+		throttle = actionState.forward - actionState.backward,
+		steer = actionState.right - actionState.left,
+		jump = actionState.jump,
+	})
+end
+
+local function hasInputChanged(nextInput: DriveInput, previousInput: DriveInput): boolean
+	return nextInput.throttle ~= previousInput.throttle
+		or nextInput.steer ~= previousInput.steer
+		or nextInput.jump ~= previousInput.jump
+end
+
+local function sendDriveInput(input: DriveInput, forceSend: boolean?)
+	local now = os.clock()
+
+	if not forceSend and now - lastSentAt < WheelchairConfig.Input.MinSendInterval then
+		return
+	end
+
+	driveInputRemote:FireServer(input)
+	lastSentInput = input
+	lastSentAt = now
+end
+
+local function restoreDefaultCamera()
+	if not cameraEnabled then
+		return
+	end
+
+	cameraEnabled = false
+	camera.CameraType = Enum.CameraType.Custom
+
+	local humanoid = getHumanoid()
+
+	if humanoid ~= nil then
+		camera.CameraSubject = humanoid
+	end
+
+	WheelchairConfig.debugPrint("Racing camera disabled")
+end
+
+local function updateRacingCamera(rootPart: BasePart, deltaTime: number)
+	if not cameraEnabled then
+		cameraEnabled = true
+		camera.CameraType = Enum.CameraType.Scriptable
+		camera.FieldOfView = WheelchairConfig.Camera.FieldOfView
+		WheelchairConfig.debugPrint("Racing camera enabled")
+	end
+
+	local lookVector = rootPart.CFrame.LookVector
+	local forward = Vector3.new(lookVector.X, 0, lookVector.Z)
+
+	if forward.Magnitude < 0.05 then
+		forward = Vector3.zAxis * -1
+	else
+		forward = forward.Unit
+	end
+
+	local focus = rootPart.Position + Vector3.new(0, WheelchairConfig.Camera.FocusHeight, 0)
+	local cameraPosition = focus - forward * WheelchairConfig.Camera.Distance + Vector3.new(0, WheelchairConfig.Camera.Height, 0)
+	local targetCFrame = CFrame.lookAt(cameraPosition, focus)
+	local alpha = math.clamp(deltaTime * WheelchairConfig.Camera.LerpSpeed, 0, 1)
+
+	camera.CFrame = camera.CFrame:Lerp(targetCFrame, alpha)
+	camera.Focus = CFrame.new(focus)
+end
+
+local function handleDriveAction(actionName: string, inputState: Enum.UserInputState): Enum.ContextActionResult
+	local _, rootPart = getDrivingWheelchair()
+
+	if rootPart == nil then
+		clearActionState()
+		return Enum.ContextActionResult.Pass
+	end
+
+	local isPressed = inputState == Enum.UserInputState.Begin
+	local isReleased = inputState == Enum.UserInputState.End or inputState == Enum.UserInputState.Cancel
+
+	if not isPressed and not isReleased then
+		return Enum.ContextActionResult.Sink
+	end
+
+	local axisValue = if isPressed then 1 else 0
+
+	if actionName == "WheelchairForward" then
+		actionState.forward = axisValue
+	elseif actionName == "WheelchairBackward" then
+		actionState.backward = axisValue
+	elseif actionName == "WheelchairLeft" then
+		actionState.left = axisValue
+	elseif actionName == "WheelchairRight" then
+		actionState.right = axisValue
+	elseif actionName == "WheelchairJump" then
+		actionState.jump = isPressed
+	end
+
+	sendDriveInput(buildDriveInput(), actionName == "WheelchairJump")
+
+	return Enum.ContextActionResult.Sink
+end
+
+local actionPriority = Enum.ContextActionPriority.High.Value + 100
+
+ContextActionService:BindActionAtPriority("WheelchairForward", handleDriveAction, false, actionPriority, Enum.KeyCode.W, Enum.KeyCode.Up)
+ContextActionService:BindActionAtPriority("WheelchairBackward", handleDriveAction, false, actionPriority, Enum.KeyCode.S, Enum.KeyCode.Down)
+ContextActionService:BindActionAtPriority("WheelchairLeft", handleDriveAction, false, actionPriority, Enum.KeyCode.A, Enum.KeyCode.Left)
+ContextActionService:BindActionAtPriority("WheelchairRight", handleDriveAction, false, actionPriority, Enum.KeyCode.D, Enum.KeyCode.Right)
+ContextActionService:BindActionAtPriority("WheelchairJump", handleDriveAction, false, actionPriority, Enum.KeyCode.Space)
+
+RunService.RenderStepped:Connect(function(deltaTime: number)
+	local _, rootPart = getDrivingWheelchair()
+
+	if rootPart == nil then
+		if wasDriving then
+			wasDriving = false
+			clearActionState()
+			sendDriveInput(WheelchairConfig.sanitizeDriveInput(nil), true)
+			WheelchairConfig.debugPrint("Stopped driving wheelchair")
+		end
+
+		restoreDefaultCamera()
+		return
+	end
+
+	if not wasDriving then
+		wasDriving = true
+		WheelchairConfig.debugPrint("Started driving wheelchair")
+	end
+
+	local nextInput = buildDriveInput()
+
+	if hasInputChanged(nextInput, lastSentInput) or WheelchairConfig.hasActiveInput(nextInput) then
+		sendDriveInput(nextInput, false)
+	end
+
+	updateRacingCamera(rootPart, deltaTime)
+end)
+
+WheelchairConfig.debugPrint("WheelchairClient started")
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+</roblox>
