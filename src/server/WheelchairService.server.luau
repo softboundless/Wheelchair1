@@ -21,6 +21,7 @@ type PlayerState = {
 	groundNormal: Vector3,
 	jumpQueued: boolean,
 	lastJumpAt: number,
+	lastMovementDebugAt: number,
 }
 
 local playerStates: { [Player]: PlayerState } = {}
@@ -53,6 +54,7 @@ local function getPlayerState(player: Player): PlayerState
 			groundNormal = Vector3.yAxis,
 			jumpQueued = false,
 			lastJumpAt = 0,
+			lastMovementDebugAt = 0,
 		}
 
 		playerStates[player] = state
@@ -143,7 +145,10 @@ local function ensureWeld(rootPart: BasePart, part: BasePart)
 
 	for _, child in ipairs(part:GetChildren()) do
 		if child:IsA("WeldConstraint") then
-			if (child.Part0 == rootPart and child.Part1 == part) or (child.Part0 == part and child.Part1 == rootPart) then
+			if
+				(child.Part0 == rootPart and child.Part1 == part)
+				or (child.Part0 == part and child.Part1 == rootPart)
+			then
 				return
 			end
 		end
@@ -156,7 +161,13 @@ local function ensureWeld(rootPart: BasePart, part: BasePart)
 	weld.Parent = part
 end
 
-local function createDebugPart(name: string, size: Vector3, cframe: CFrame, color: Color3, parent: Instance): Part
+local function createDebugPart(
+	name: string,
+	size: Vector3,
+	cframe: CFrame,
+	color: Color3,
+	parent: Instance
+): Part
 	local part = Instance.new("Part")
 	part.Name = name
 	part.Size = size
@@ -181,7 +192,7 @@ local function createDebugWheelchair(): Model
 	rootPart.Anchored = false
 	rootPart.CanCollide = true
 	rootPart.Massless = false
-	rootPart.CustomPhysicalProperties = PhysicalProperties.new(1.2, 1.1, 0.05, 1, 1)
+	rootPart.CustomPhysicalProperties = PhysicalProperties.new(1.2, 0.05, 0.05, 1, 1)
 	rootPart.Parent = model
 
 	local seat = Instance.new("VehicleSeat")
@@ -195,7 +206,7 @@ local function createDebugWheelchair(): Model
 	seat.Disabled = false
 	seat.Parent = model
 
-	local base = createDebugPart(
+	createDebugPart(
 		"VisualBase",
 		Vector3.new(4.3, 0.3, 4.2),
 		rootPart.CFrame * CFrame.new(0, 0.65, 0),
@@ -203,7 +214,7 @@ local function createDebugWheelchair(): Model
 		model
 	)
 
-	local backRest = createDebugPart(
+	createDebugPart(
 		"VisualBackRest",
 		Vector3.new(3.4, 3, 0.3),
 		rootPart.CFrame * CFrame.new(0, 1.9, 1.65) * CFrame.Angles(math.rad(8), 0, 0),
@@ -283,18 +294,63 @@ local function findVehicleSeat(model: Model): VehicleSeat?
 	return nil
 end
 
+local function getNetworkOwnerName(rootPart: BasePart): string
+	local success, owner = pcall(function()
+		return rootPart:GetNetworkOwner()
+	end)
+
+	if not success then
+		return "unknown"
+	end
+
+	if owner == nil then
+		return "server"
+	end
+
+	return owner.Name
+end
+
+local function setServerNetworkOwner(player: Player, rootPart: BasePart, context: string)
+	local success, errorMessage = pcall(function()
+		rootPart:SetNetworkOwner(nil)
+	end)
+
+	if success then
+		WheelchairConfig.debugPrint(
+			"Network owner set to server",
+			context,
+			player.Name,
+			"owner=",
+			getNetworkOwnerName(rootPart)
+		)
+	else
+		WheelchairConfig.debugWarn(
+			"Could not set server network ownership",
+			context,
+			player.Name,
+			errorMessage
+		)
+	end
+end
+
 local function configureVehicleModel(player: Player, model: Model): (BasePart?, VehicleSeat?)
 	local rootPart = findVehiclePart(model, WheelchairConfig.Model.RootPartName)
 
 	if rootPart == nil then
-		WheelchairConfig.debugWarn("Wheelchair model is missing root part:", WheelchairConfig.Model.RootPartName)
+		WheelchairConfig.debugWarn(
+			"Wheelchair model is missing root part:",
+			WheelchairConfig.Model.RootPartName
+		)
 		return nil, nil
 	end
 
 	local seat = findVehicleSeat(model)
 
 	if seat == nil then
-		WheelchairConfig.debugWarn("Wheelchair model is missing VehicleSeat:", WheelchairConfig.Model.SeatName)
+		WheelchairConfig.debugWarn(
+			"Wheelchair model is missing VehicleSeat:",
+			WheelchairConfig.Model.SeatName
+		)
 		return nil, nil
 	end
 
@@ -311,7 +367,7 @@ local function configureVehicleModel(player: Player, model: Model): (BasePart?, 
 				descendant.CanCollide = true
 				descendant.Massless = false
 				descendant.Transparency = WheelchairConfig.Model.RootTransparency
-				descendant.CustomPhysicalProperties = PhysicalProperties.new(1.2, 1.1, 0.05, 1, 1)
+				descendant.CustomPhysicalProperties = PhysicalProperties.new(1.2, 0.05, 0.05, 1, 1)
 			else
 				descendant.CanCollide = false
 				descendant.Massless = true
@@ -322,15 +378,75 @@ local function configureVehicleModel(player: Player, model: Model): (BasePart?, 
 
 	seat.Disabled = false
 
-	local success = pcall(function()
-		rootPart:SetNetworkOwner(nil)
-	end)
-
-	if not success then
-		WheelchairConfig.debugWarn("Could not set server network ownership for", player.Name)
-	end
+	setServerNetworkOwner(player, rootPart, "configure")
 
 	return rootPart, seat
+end
+
+local function logPartTransform(label: string, part: BasePart?)
+	if part == nil then
+		WheelchairConfig.debugWarn("Spawn diagnostics:", label, "is missing")
+		return
+	end
+
+	WheelchairConfig.debugPrint(
+		"Spawn diagnostics:",
+		label,
+		"Name=",
+		part.Name,
+		"CFrame=",
+		part.CFrame,
+		"Orientation=",
+		part.Orientation,
+		"LookVector=",
+		part.CFrame.LookVector
+	)
+end
+
+local function logSpawnDiagnostics(
+	player: Player,
+	model: Model,
+	rootPart: BasePart,
+	seat: VehicleSeat
+)
+	local primaryPart = model.PrimaryPart
+
+	WheelchairConfig.debugPrint(
+		"Spawn diagnostics for",
+		player.Name,
+		"rootPart=",
+		rootPart.Name,
+		"seat=",
+		seat.Name,
+		"primaryPart=",
+		if primaryPart ~= nil then primaryPart.Name else "nil"
+	)
+
+	logPartTransform("Frame", rootPart)
+	logPartTransform("VehicleSeat", seat)
+	logPartTransform("PrimaryPart", primaryPart)
+
+	WheelchairConfig.debugPrint(
+		"Spawn diagnostics: root physics",
+		"AssemblyMass=",
+		rootPart.AssemblyMass,
+		"CanCollide=",
+		rootPart.CanCollide,
+		"Massless=",
+		rootPart.Massless,
+		"Anchored=",
+		rootPart.Anchored
+	)
+
+	local seatForwardAlignment = rootPart.CFrame.LookVector:Dot(seat.CFrame.LookVector)
+
+	if math.abs(seatForwardAlignment) < 0.75 then
+		WheelchairConfig.debugWarn(
+			"Frame.LookVector is not aligned with VehicleSeat.LookVector. Camera and movement use Frame.LookVector.",
+			"Dot=",
+			seatForwardAlignment
+		)
+	end
 end
 
 local function destroyPlayerVehicle(player: Player)
@@ -348,7 +464,11 @@ local function destroyPlayerVehicle(player: Player)
 	state.jumpQueued = false
 end
 
-local function setDescriptionProperty(description: HumanoidDescription, propertyName: string, value: any)
+local function setDescriptionProperty(
+	description: HumanoidDescription,
+	propertyName: string,
+	value: any
+)
 	local success = pcall(function()
 		(description :: any)[propertyName] = value
 	end)
@@ -444,7 +564,11 @@ local function cleanAvatar(player: Player, character: Model, humanoid: Humanoid)
 		if applySuccess then
 			WheelchairConfig.debugPrint("Cleaned avatar for", player.Name)
 		else
-			WheelchairConfig.debugWarn("Failed to apply cleaned avatar for", player.Name, applyError)
+			WheelchairConfig.debugWarn(
+				"Failed to apply cleaned avatar for",
+				player.Name,
+				applyError
+			)
 		end
 	else
 		WheelchairConfig.debugWarn("Could not read avatar description for", player.Name)
@@ -454,7 +578,10 @@ local function cleanAvatar(player: Player, character: Model, humanoid: Humanoid)
 	removeTools(player, character)
 
 	if humanoid.RigType ~= Enum.HumanoidRigType.R15 then
-		WheelchairConfig.debugWarn(player.Name, "is not using R15. Wheelchair seating is tuned for normal R15 avatars.")
+		WheelchairConfig.debugWarn(
+			player.Name,
+			"is not using R15. Wheelchair seating is tuned for normal R15 avatars."
+		)
 	end
 
 	disableSeatExitJump(humanoid)
@@ -470,12 +597,18 @@ local function getSpawnCFrame(characterRootPart: BasePart): CFrame
 		flatLookVector = flatLookVector.Unit
 	end
 
-	local spawnPosition = characterRootPart.Position + Vector3.new(0, WheelchairConfig.Spawn.SpawnHeightOffset, 0)
+	local spawnPosition = characterRootPart.Position
+		+ Vector3.new(0, WheelchairConfig.Spawn.SpawnHeightOffset, 0)
 
 	return CFrame.lookAt(spawnPosition, spawnPosition + flatLookVector)
 end
 
-local function spawnWheelchairForPlayer(player: Player, character: Model, humanoid: Humanoid, characterRootPart: BasePart)
+local function spawnWheelchairForPlayer(
+	player: Player,
+	_character: Model,
+	humanoid: Humanoid,
+	characterRootPart: BasePart
+)
 	destroyPlayerVehicle(player)
 
 	local template = findWheelchairTemplate()
@@ -486,7 +619,10 @@ local function spawnWheelchairForPlayer(player: Player, character: Model, humano
 		WheelchairConfig.debugPrint("Cloned Wheelchair template for", player.Name)
 	elseif WheelchairConfig.Spawn.UseDebugFallback then
 		vehicle = createDebugWheelchair()
-		WheelchairConfig.debugWarn("No Wheelchair template found. Created debug fallback for", player.Name)
+		WheelchairConfig.debugWarn(
+			"No Wheelchair template found. Created debug fallback for",
+			player.Name
+		)
 	else
 		WheelchairConfig.debugWarn("No Wheelchair template found, and debug fallback is disabled.")
 		return
@@ -503,6 +639,7 @@ local function spawnWheelchairForPlayer(player: Player, character: Model, humano
 	end
 
 	vehicle:PivotTo(getSpawnCFrame(characterRootPart))
+	logSpawnDiagnostics(player, vehicle, rootPart, seat)
 
 	local state = getPlayerState(player)
 	state.vehicle = vehicle
@@ -510,14 +647,25 @@ local function spawnWheelchairForPlayer(player: Player, character: Model, humano
 	state.seat = seat
 	state.groundNormal = Vector3.yAxis
 	state.driveInput = getDefaultDriveInput()
+	state.lastMovementDebugAt = 0
 
 	task.delay(WheelchairConfig.Spawn.SeatDelay, function()
-		if humanoid.Parent == nil or seat.Parent == nil then
+		if humanoid.Parent == nil or seat.Parent == nil or rootPart.Parent == nil then
 			return
 		end
 
 		disableSeatExitJump(humanoid)
 		seat:Sit(humanoid)
+		setServerNetworkOwner(player, rootPart, "after seat")
+
+		task.delay(0.2, function()
+			if rootPart.Parent == nil then
+				return
+			end
+
+			setServerNetworkOwner(player, rootPart, "after seat delay")
+		end)
+
 		WheelchairConfig.debugPrint("Seated", player.Name, "in wheelchair")
 	end)
 
@@ -581,13 +729,19 @@ local function getStableForward(rootPart: BasePart, normal: Vector3): Vector3
 	return forward.Unit
 end
 
-local function getGroundInfo(player: Player, state: PlayerState, rootPart: BasePart, deltaTime: number): (boolean, Vector3)
+local function getGroundInfo(
+	player: Player,
+	state: PlayerState,
+	rootPart: BasePart,
+	deltaTime: number
+): (boolean, Vector3)
 	local rayOrigin = rootPart.Position
 	local rayDirection = -state.groundNormal.Unit * WheelchairConfig.Movement.GroundRayLength
 	local result = Workspace:Raycast(rayOrigin, rayDirection, buildRaycastParams(player, state))
 
 	if result == nil then
-		local fallbackNormal = state.groundNormal:Lerp(Vector3.yAxis, math.clamp(deltaTime * 2, 0, 1))
+		local fallbackNormal =
+			state.groundNormal:Lerp(Vector3.yAxis, math.clamp(deltaTime * 2, 0, 1))
 		state.groundNormal = fallbackNormal.Unit
 		return false, state.groundNormal
 	end
@@ -596,7 +750,8 @@ local function getGroundInfo(player: Player, state: PlayerState, rootPart: BaseP
 	local grounded = distance <= WheelchairConfig.Movement.GroundedDistance
 	local lerpSpeed = WheelchairConfig.Movement.GroundNormalLerpSpeed
 
-	state.groundNormal = state.groundNormal:Lerp(result.Normal, math.clamp(deltaTime * lerpSpeed, 0, 1)).Unit
+	state.groundNormal =
+		state.groundNormal:Lerp(result.Normal, math.clamp(deltaTime * lerpSpeed, 0, 1)).Unit
 
 	return grounded, state.groundNormal
 end
@@ -607,6 +762,60 @@ local function stabilizeRoot(rootPart: BasePart, normal: Vector3, deltaTime: num
 	local alpha = math.clamp(deltaTime * WheelchairConfig.Movement.OrientationLerpSpeed, 0, 1)
 
 	rootPart.CFrame = rootPart.CFrame:Lerp(targetCFrame, alpha)
+end
+
+local function logMovementDiagnostics(
+	player: Player,
+	state: PlayerState,
+	rootPart: BasePart,
+	driveInput: DriveInput,
+	grounded: boolean,
+	groundNormal: Vector3,
+	targetPlanarVelocity: Vector3,
+	newPlanarVelocity: Vector3
+)
+	local interval = WheelchairConfig.Movement.DebugLogInterval
+
+	if interval <= 0 then
+		return
+	end
+
+	local now = os.clock()
+
+	if now - state.lastMovementDebugAt < interval then
+		return
+	end
+
+	state.lastMovementDebugAt = now
+
+	local actualVelocity = rootPart.AssemblyLinearVelocity
+	local actualPlanarVelocity = getPlanarVector(actualVelocity, groundNormal)
+
+	WheelchairConfig.debugPrint(
+		"Movement diagnostics",
+		player.Name,
+		"owner=",
+		getNetworkOwnerName(rootPart),
+		"grounded=",
+		grounded,
+		"input=",
+		string.format(
+			"t=%.1f,s=%.1f,j=%s",
+			driveInput.throttle,
+			driveInput.steer,
+			tostring(driveInput.jump)
+		),
+		"targetPlanarSpeed=",
+		targetPlanarVelocity.Magnitude,
+		"newPlanarSpeed=",
+		newPlanarVelocity.Magnitude,
+		"actualPlanarSpeed=",
+		actualPlanarVelocity.Magnitude,
+		"actualVelocity=",
+		actualVelocity,
+		"assemblyMass=",
+		rootPart.AssemblyMass
+	)
 end
 
 local function applyWheelchairMovement(player: Player, state: PlayerState, deltaTime: number)
@@ -636,7 +845,9 @@ local function applyWheelchairMovement(player: Player, state: PlayerState, delta
 
 	local forward = getStableForward(rootPart, groundNormal)
 	local targetPlanarVelocity = forward * (driveInput.throttle * maxSpeed)
-	local acceleration = if driveInput.throttle == 0 then movement.CoastDeceleration else movement.Acceleration
+	local acceleration = if driveInput.throttle == 0
+		then movement.CoastDeceleration
+		else movement.Acceleration
 	local blend = math.clamp((deltaTime * acceleration) / math.max(maxSpeed, 1), 0, 1)
 	local newPlanarVelocity = planarVelocity:Lerp(targetPlanarVelocity, blend)
 
@@ -646,8 +857,10 @@ local function applyWheelchairMovement(player: Player, state: PlayerState, delta
 
 	rootPart.AssemblyLinearVelocity = newPlanarVelocity + verticalVelocity
 
-	local speedRatio = math.clamp(newPlanarVelocity.Magnitude / math.max(movement.MaxSpeed, 1), 0, 1)
-	local turnVelocity = groundNormal * (driveInput.steer * movement.TurnRate * math.max(speedRatio, 0.25))
+	local speedRatio =
+		math.clamp(newPlanarVelocity.Magnitude / math.max(movement.MaxSpeed, 1), 0, 1)
+	local turnVelocity = groundNormal
+		* (driveInput.steer * movement.TurnRate * math.max(speedRatio, 0.25))
 
 	if turnVelocity.Magnitude > movement.MaxAngularVelocity then
 		turnVelocity = turnVelocity.Unit * movement.MaxAngularVelocity
@@ -655,18 +868,32 @@ local function applyWheelchairMovement(player: Player, state: PlayerState, delta
 
 	rootPart.AssemblyAngularVelocity = turnVelocity
 
-	if grounded then
-		stabilizeRoot(rootPart, groundNormal, deltaTime)
-	else
-		stabilizeRoot(rootPart, Vector3.yAxis, deltaTime * 0.35)
+	if movement.EnableOrientationStabilization then
+		if grounded then
+			stabilizeRoot(rootPart, groundNormal, deltaTime)
+		else
+			stabilizeRoot(rootPart, Vector3.yAxis, deltaTime * 0.35)
+		end
 	end
+
+	logMovementDiagnostics(
+		player,
+		state,
+		rootPart,
+		driveInput,
+		grounded,
+		groundNormal,
+		targetPlanarVelocity,
+		newPlanarVelocity
+	)
 
 	if state.jumpQueued and movement.EnableJump and grounded then
 		local now = os.clock()
 
 		if now - state.lastJumpAt >= movement.JumpCooldown then
 			local velocity = rootPart.AssemblyLinearVelocity
-			rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, math.max(velocity.Y, movement.JumpSpeed), velocity.Z)
+			rootPart.AssemblyLinearVelocity =
+				Vector3.new(velocity.X, math.max(velocity.Y, movement.JumpSpeed), velocity.Z)
 			state.lastJumpAt = now
 			WheelchairConfig.debugPrint("Wheelchair jump for", player.Name)
 		end
@@ -675,7 +902,11 @@ local function applyWheelchairMovement(player: Player, state: PlayerState, delta
 	state.jumpQueued = false
 end
 
-local function canAcceptInput(state: PlayerState, nextInput: DriveInput, isJumpEdge: boolean): boolean
+local function canAcceptInput(
+	state: PlayerState,
+	nextInput: DriveInput,
+	isJumpEdge: boolean
+): boolean
 	if isJumpEdge then
 		return true
 	end
@@ -733,7 +964,10 @@ local function handleCharacter(player: Player, character: Model)
 	local characterRootPart = character:WaitForChild("HumanoidRootPart", 10)
 
 	if humanoid == nil or characterRootPart == nil then
-		WheelchairConfig.debugWarn("Character missing Humanoid or HumanoidRootPart for", player.Name)
+		WheelchairConfig.debugWarn(
+			"Character missing Humanoid or HumanoidRootPart for",
+			player.Name
+		)
 		return
 	end
 
@@ -763,6 +997,8 @@ local function onPlayerAdded(player: Player)
 end
 
 local function start()
+	Workspace.Gravity = WheelchairConfig.World.Gravity
+
 	local driveInputRemote = getOrCreateDriveInputRemote()
 
 	driveInputRemote.OnServerEvent:Connect(onDriveInput)

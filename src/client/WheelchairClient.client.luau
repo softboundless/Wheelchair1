@@ -22,7 +22,8 @@ local WheelchairConfig = require(RojoShared:WaitForChild("WheelchairConfig"))
 type DriveInput = WheelchairConfig.DriveInput
 
 local remotesFolder = RojoShared:WaitForChild(WheelchairConfig.RemoteFolderName)
-local driveInputRemote = remotesFolder:WaitForChild(WheelchairConfig.DriveInputRemoteName) :: RemoteEvent
+local driveInputRemote =
+	remotesFolder:WaitForChild(WheelchairConfig.DriveInputRemoteName) :: RemoteEvent
 
 local actionState = {
 	forward = 0,
@@ -72,7 +73,10 @@ local function getDrivingWheelchair(): (Model?, BasePart?)
 		return nil, nil
 	end
 
-	if vehicleModel:GetAttribute(WheelchairConfig.Model.OwnerUserIdAttribute) ~= localPlayer.UserId then
+	if
+		vehicleModel:GetAttribute(WheelchairConfig.Model.OwnerUserIdAttribute)
+		~= localPlayer.UserId
+	then
 		return nil, nil
 	end
 
@@ -88,7 +92,7 @@ end
 local function buildDriveInput(): DriveInput
 	return WheelchairConfig.sanitizeDriveInput({
 		throttle = actionState.forward - actionState.backward,
-		steer = actionState.right - actionState.left,
+		steer = actionState.left - actionState.right,
 		jump = actionState.jump,
 	})
 end
@@ -146,7 +150,9 @@ local function updateRacingCamera(rootPart: BasePart, deltaTime: number)
 	end
 
 	local focus = rootPart.Position + Vector3.new(0, WheelchairConfig.Camera.FocusHeight, 0)
-	local cameraPosition = focus - forward * WheelchairConfig.Camera.Distance + Vector3.new(0, WheelchairConfig.Camera.Height, 0)
+	local cameraPosition = focus
+		- forward * WheelchairConfig.Camera.Distance
+		+ Vector3.new(0, WheelchairConfig.Camera.Height, 0)
 	local targetCFrame = CFrame.lookAt(cameraPosition, focus)
 	local alpha = math.clamp(deltaTime * WheelchairConfig.Camera.LerpSpeed, 0, 1)
 
@@ -154,7 +160,10 @@ local function updateRacingCamera(rootPart: BasePart, deltaTime: number)
 	camera.Focus = CFrame.new(focus)
 end
 
-local function handleDriveAction(actionName: string, inputState: Enum.UserInputState): Enum.ContextActionResult
+local function handleDriveAction(
+	actionName: string,
+	inputState: Enum.UserInputState
+): Enum.ContextActionResult
 	local _, rootPart = getDrivingWheelchair()
 
 	if rootPart == nil then
@@ -163,7 +172,8 @@ local function handleDriveAction(actionName: string, inputState: Enum.UserInputS
 	end
 
 	local isPressed = inputState == Enum.UserInputState.Begin
-	local isReleased = inputState == Enum.UserInputState.End or inputState == Enum.UserInputState.Cancel
+	local isReleased = inputState == Enum.UserInputState.End
+		or inputState == Enum.UserInputState.Cancel
 
 	if not isPressed and not isReleased then
 		return Enum.ContextActionResult.Sink
@@ -190,11 +200,45 @@ end
 
 local actionPriority = Enum.ContextActionPriority.High.Value + 100
 
-ContextActionService:BindActionAtPriority("WheelchairForward", handleDriveAction, false, actionPriority, Enum.KeyCode.W, Enum.KeyCode.Up)
-ContextActionService:BindActionAtPriority("WheelchairBackward", handleDriveAction, false, actionPriority, Enum.KeyCode.S, Enum.KeyCode.Down)
-ContextActionService:BindActionAtPriority("WheelchairLeft", handleDriveAction, false, actionPriority, Enum.KeyCode.A, Enum.KeyCode.Left)
-ContextActionService:BindActionAtPriority("WheelchairRight", handleDriveAction, false, actionPriority, Enum.KeyCode.D, Enum.KeyCode.Right)
-ContextActionService:BindActionAtPriority("WheelchairJump", handleDriveAction, false, actionPriority, Enum.KeyCode.Space)
+ContextActionService:BindActionAtPriority(
+	"WheelchairForward",
+	handleDriveAction,
+	false,
+	actionPriority,
+	Enum.KeyCode.W,
+	Enum.KeyCode.Up
+)
+ContextActionService:BindActionAtPriority(
+	"WheelchairBackward",
+	handleDriveAction,
+	false,
+	actionPriority,
+	Enum.KeyCode.S,
+	Enum.KeyCode.Down
+)
+ContextActionService:BindActionAtPriority(
+	"WheelchairLeft",
+	handleDriveAction,
+	false,
+	actionPriority,
+	Enum.KeyCode.A,
+	Enum.KeyCode.Left
+)
+ContextActionService:BindActionAtPriority(
+	"WheelchairRight",
+	handleDriveAction,
+	false,
+	actionPriority,
+	Enum.KeyCode.D,
+	Enum.KeyCode.Right
+)
+ContextActionService:BindActionAtPriority(
+	"WheelchairJump",
+	handleDriveAction,
+	false,
+	actionPriority,
+	Enum.KeyCode.Space
+)
 
 RunService.RenderStepped:Connect(function(deltaTime: number)
 	local _, rootPart = getDrivingWheelchair()

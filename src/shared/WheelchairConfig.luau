@@ -20,7 +20,7 @@ WheelchairConfig.WorkspaceFolderName = "Wheelchairs"
 WheelchairConfig.Model = {
 	TemplateName = "Wheelchair",
 	RootPartName = "Frame",
-	SeatName = "Seat",
+	SeatName = "VehicleSeat",
 	IsWheelchairAttribute = "IsWheelchair",
 	OwnerUserIdAttribute = "OwnerUserId",
 	OwnerNameAttribute = "OwnerName",
@@ -38,21 +38,27 @@ WheelchairConfig.Input = {
 	MinSendInterval = 1 / 30,
 }
 
+WheelchairConfig.World = {
+	Gravity = 20,
+}
+
 WheelchairConfig.Movement = {
-	MaxSpeed = 44,
-	ReverseSpeedMultiplier = 0.35,
-	Acceleration = 90,
-	CoastDeceleration = 50,
-	TurnRate = 2.6,
+	MaxSpeed = 55,
+	ReverseSpeedMultiplier = 0.4,
+	Acceleration = 120,
+	CoastDeceleration = 70,
+	TurnRate = 30,
 	GroundRayLength = 7,
 	GroundedDistance = 4,
-	GroundNormalLerpSpeed = 14,
-	OrientationLerpSpeed = 12,
+	GroundNormalLerpSpeed = 3,
+	OrientationLerpSpeed = 0.5,
+	EnableOrientationStabilization = true,
 	MaxPlanarVelocity = 58,
-	MaxAngularVelocity = 8,
+	MaxAngularVelocity = 1.7,
 	EnableJump = true,
-	JumpSpeed = 34,
-	JumpCooldown = 0.65,
+	JumpSpeed = 15,
+	JumpCooldown = 0.45,
+	DebugLogInterval = 0.5,
 }
 
 WheelchairConfig.Camera = {
