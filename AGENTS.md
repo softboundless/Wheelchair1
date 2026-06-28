@@ -36,6 +36,9 @@ Avoid `init.client.luau` and `init.server.luau` unless the project explicitly re
 
 ## Wheelchair vehicle rules
 
+# IMPORTANT 
+!!!same BMX physics, wheelchair visuals, NOT make full new a wheelchair vehicle controller!!!
+
 The game is being converted from a BMX-style system into a wheelchair racing system.
 
 * The wheelchair should use one main invisible physics root part.

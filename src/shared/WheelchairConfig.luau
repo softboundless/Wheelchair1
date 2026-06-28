@@ -3,18 +3,17 @@
 local WheelchairConfig = {}
 
 export type DriveInput = {
-	throttle: number,
-	steer: number,
+	moveX: number,
+	moveZ: number,
 	jump: boolean,
 }
 
-WheelchairConfig.Debug = true
+WheelchairConfig.Debug = false
 WheelchairConfig.DebugPrefix = "[Wheelchair]"
 
 WheelchairConfig.SharedFolderName = "RojoShared"
 WheelchairConfig.RemoteFolderName = "WheelchairRemotes"
 WheelchairConfig.DriveInputRemoteName = "WheelchairDriveInput"
-
 WheelchairConfig.WorkspaceFolderName = "Wheelchairs"
 
 WheelchairConfig.Model = {
@@ -25,48 +24,77 @@ WheelchairConfig.Model = {
 	OwnerUserIdAttribute = "OwnerUserId",
 	OwnerNameAttribute = "OwnerName",
 	RootTransparency = 1,
+	RootPhysicalProperties = PhysicalProperties.new(1.2, 0.05, 0.05, 1, 1),
+	ForceAttachmentName = "WheelchairForceAttachment",
+	MoveForceName = "WheelchairMoveForce",
+	OrientationAttachmentName = "WheelchairOrientationAttachment",
+	AlignOrientationName = "WheelchairAlignOrientation",
+	VisualMotorPrefix = "WheelchairVisualMotor",
 }
 
 WheelchairConfig.Spawn = {
 	UseDebugFallback = true,
 	SpawnHeightOffset = 0,
 	SeatDelay = 0.2,
+	ReseatInterval = 0.2,
+	OwnershipRefreshInterval = 1,
 }
 
 WheelchairConfig.Input = {
 	DeadZone = 0.05,
-	MinSendInterval = 1 / 30,
+	MinSendInterval = 1 / 100,
 }
 
 WheelchairConfig.World = {
-	Gravity = 20,
+	Gravity = 50,
 }
 
 WheelchairConfig.Movement = {
-	MaxSpeed = 55,
-	ReverseSpeedMultiplier = 0.4,
-	Acceleration = 120,
-	CoastDeceleration = 70,
-	TurnRate = 30,
-	GroundRayLength = 7,
-	GroundedDistance = 4,
-	GroundNormalLerpSpeed = 3,
-	OrientationLerpSpeed = 0.5,
-	EnableOrientationStabilization = true,
-	MaxPlanarVelocity = 58,
-	MaxAngularVelocity = 1.7,
+	MaxSpeed = 115,
+	ForceAcceleration = 0.55,
+	MaxPlanarVelocity = 125,
+
+	GroundRayLength = 10,
+	GroundedDistance = 3.8,
+	GroundNormalAirLerpSpeed = 5,
+	OrientationLerpSpeed = 10,
+	RootAlignResponsiveness = 18,
+	RootAlignMaxTorque = 120000,
+	MaxBodyLean = math.rad(4),
+
 	EnableJump = true,
-	JumpSpeed = 15,
-	JumpCooldown = 0.45,
-	DebugLogInterval = 0.5,
+	JumpSpeed = 20,
+	JumpCooldown = 0.35,
+	JumpTakeoffTime = 0.25,
+	JumpStartSpeedRatio = 0.45,
+	AirControlAcceleration = 0.72,
+	AirMaxSpeedMultiplier = 0.85,
+	AirBackwardBrakeAcceleration = 0.65,
+
+	RearWheelRadius = 1.2,
+	FrontCasterRadius = 0.35,
+	CasterYawLerpSpeed = 12,
+	WheelTurnSpinBias = 0.35,
 }
 
 WheelchairConfig.Camera = {
-	Distance = 13,
-	Height = 6,
-	FocusHeight = 2.5,
-	LerpSpeed = 9,
-	FieldOfView = 78,
+	Distance = 10,
+	FocusHeight = 4.5,
+	FieldOfView = 80,
+	SpeedFovBoost = 1,
+	LerpSpeed = 35,
+	Sensitivity = 1 / 260,
+	MinPitch = -1.25,
+	MaxPitch = 1.15,
+	CollisionPadding = 0.3,
+}
+
+WheelchairConfig.Pose = {
+	AnimationStopInterval = 0.35,
+	HeadYawLimit = math.rad(45),
+	HeadPitchLimit = math.rad(25),
+	HeadLerpSpeed = 10,
+	PushCycleScale = 0.6,
 }
 
 WheelchairConfig.Avatar = {
@@ -102,29 +130,31 @@ WheelchairConfig.Avatar = {
 }
 
 local DEFAULT_DRIVE_INPUT: DriveInput = {
-	throttle = 0,
-	steer = 0,
+	moveX = 0,
+	moveZ = 0,
 	jump = false,
 }
 
-local function readNumber(value: unknown, fallback: number): number
-	if typeof(value) ~= "number" then
-		return fallback
-	end
-
-	if value ~= value then
-		return fallback
+local function readNumber(value: unknown): number
+	if typeof(value) ~= "number" or value ~= value then
+		return 0
 	end
 
 	return value
 end
 
-local function applyDeadZone(value: number): number
-	if math.abs(value) < WheelchairConfig.Input.DeadZone then
-		return 0
+local function sanitizeMove(x: number, z: number): (number, number)
+	local move = Vector2.new(math.clamp(x, -1, 1), math.clamp(z, -1, 1))
+
+	if move.Magnitude < WheelchairConfig.Input.DeadZone then
+		return 0, 0
 	end
 
-	return value
+	if move.Magnitude > 1 then
+		move = move.Unit
+	end
+
+	return move.X, move.Y
 end
 
 function WheelchairConfig.sanitizeDriveInput(input: unknown): DriveInput
@@ -133,32 +163,29 @@ function WheelchairConfig.sanitizeDriveInput(input: unknown): DriveInput
 	end
 
 	local rawInput = input :: any
+	local moveX, moveZ = sanitizeMove(readNumber(rawInput.moveX), readNumber(rawInput.moveZ))
 
 	return {
-		throttle = applyDeadZone(math.clamp(readNumber(rawInput.throttle, 0), -1, 1)),
-		steer = applyDeadZone(math.clamp(readNumber(rawInput.steer, 0), -1, 1)),
+		moveX = moveX,
+		moveZ = moveZ,
 		jump = rawInput.jump == true,
 	}
 end
 
 function WheelchairConfig.hasActiveInput(input: DriveInput): boolean
-	return input.throttle ~= 0 or input.steer ~= 0 or input.jump
+	return input.moveX ~= 0 or input.moveZ ~= 0 or input.jump
 end
 
 function WheelchairConfig.debugPrint(...: any)
-	if not WheelchairConfig.Debug then
-		return
+	if WheelchairConfig.Debug then
+		print(WheelchairConfig.DebugPrefix, ...)
 	end
-
-	print(WheelchairConfig.DebugPrefix, ...)
 end
 
 function WheelchairConfig.debugWarn(...: any)
-	if not WheelchairConfig.Debug then
-		return
+	if WheelchairConfig.Debug then
+		warn(WheelchairConfig.DebugPrefix, ...)
 	end
-
-	warn(WheelchairConfig.DebugPrefix, ...)
 end
 
 return WheelchairConfig
